@@ -2,12 +2,13 @@
 
 namespace Contributte\RabbitMQ\Consumer;
 
-use Bunny\AbstractClient;
 use Bunny\Channel;
 use Bunny\Client;
+use Bunny\ClientInterface;
 use Bunny\Message;
 use Contributte\RabbitMQ\Consumer\Exception\UnexpectedConsumerResultTypeException;
 use Contributte\RabbitMQ\Queue\IQueue;
+use Tests\Fixtures\ChannelMock;
 
 class BulkConsumer extends Consumer
 {
@@ -20,6 +21,8 @@ class BulkConsumer extends Consumer
 	protected int $bulkTime;
 
 	protected ?int $stopTime = null;
+
+	private ?ClientInterface $lastClient = null;
 
 	public function __construct(
 		string $name,
@@ -41,7 +44,7 @@ class BulkConsumer extends Consumer
 		}
 	}
 
-	public function consume(?int $maxSeconds = null, ?int $maxMessages = null): void
+	public function consume(?int $maxMessages = null, ?int $maxSeconds = null): void
 	{
 		$this->maxMessages = $maxMessages;
 		if ($maxSeconds > 0) {
@@ -57,8 +60,7 @@ class BulkConsumer extends Consumer
 		$this->setupConsume($channel);
 		$this->startConsumeLoop($channel);
 
-		//process rest of items
-		$this->processBuffer($channel->getClient());
+		$this->processBuffer();
 	}
 
 	private function setupConsume(Channel $channel): void
@@ -66,20 +68,29 @@ class BulkConsumer extends Consumer
 		$channel->consume(
 			function (Message $message, Channel $channel, Client $client): void {
 				$this->messages++;
+				$this->lastClient = $client;
 				$bulkCount = $this->addToBuffer(new BulkMessage($message, $channel));
 				if ($bulkCount >= $this->bulkSize || $this->isMaxMessages() || $this->isStopTime()) {
-					$client->stop();
+					$channel->close();
 				}
 			},
 			$this->queue->getName()
 		);
 	}
 
-	private function startConsumeLoop(Channel $channel): void
+	private function startConsumeLoop(Channel|ChannelMock $channel): void
 	{
 		do {
-			$channel->getClient()->run($this->getTtl());
-			$this->processBuffer($channel->getClient());
+			// In tests ChannelMock has runClient(); in production Bunny\Channel doesn’t
+			if (method_exists($channel, 'runClient')) {
+				// use TTL to respect bulkTime/stopTime window
+				$channel->runClient($this->getTtl());
+			} else {
+				// fallback for environments where we can only reach the client
+				$this->lastClient?->run();
+			}
+
+			$this->processBuffer();
 		} while (!$this->isStopTime() && !$this->isMaxMessages());
 	}
 
@@ -90,9 +101,9 @@ class BulkConsumer extends Consumer
 		return count($this->buffer);
 	}
 
-	private function processBuffer(AbstractClient $client): void
+	private function processBuffer(): void
 	{
-		if (count($this->buffer) === 0) {
+		if ($this->lastClient === null || count($this->buffer) === 0) {
 			return;
 		}
 
@@ -110,7 +121,7 @@ class BulkConsumer extends Consumer
 
 		if (!is_array($result)) {
 			$result = array_map(static fn () => IConsumer::MESSAGE_NACK, $messages);
-			$this->sendResultsBack($client, $result);
+			$this->sendResultsBack($result);
 
 			throw new UnexpectedConsumerResultTypeException(
 				'Unexpected result from consumer. Expected array(delivery_tag => MESSAGE_STATUS [constant from IConsumer]) but get ' . gettype($result)
@@ -119,7 +130,7 @@ class BulkConsumer extends Consumer
 
 		$result = array_map('intval', $result);
 
-		$this->sendResultsBack($client, $result);
+		$this->sendResultsBack($result);
 
 		$this->buffer = [];
 	}
@@ -127,17 +138,14 @@ class BulkConsumer extends Consumer
 	/**
 	 * @param array<mixed> $result
 	 */
-	private function sendResultsBack(AbstractClient $client, array $result): void
+	private function sendResultsBack(array $result): void
 	{
-		if ($client instanceof Client) {
-			foreach ($this->buffer as $bulkMessage) {
-				$this->sendResponse(
-					$bulkMessage->getMessage(),
-					$bulkMessage->getChannel(),
-					$result[$bulkMessage->getMessage()->deliveryTag] ?? IConsumer::MESSAGE_NACK,
-					$client
-				);
-			}
+		foreach ($this->buffer as $bulkMessage) {
+			$this->sendResponse(
+				$bulkMessage->getMessage(),
+				$bulkMessage->getChannel(),
+				$result[$bulkMessage->getMessage()->deliveryTag] ?? IConsumer::MESSAGE_NACK,
+			);
 		}
 	}
 

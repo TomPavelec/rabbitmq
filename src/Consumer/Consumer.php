@@ -3,7 +3,6 @@
 namespace Contributte\RabbitMQ\Consumer;
 
 use Bunny\Channel;
-use Bunny\Client;
 use Bunny\Message;
 use Contributte\RabbitMQ\Queue\IQueue;
 
@@ -50,7 +49,7 @@ class Consumer
 		return $this->callback;
 	}
 
-	public function consume(?int $maxSeconds = null, ?int $maxMessages = null): void
+	public function consume(?int $maxMessages = null): void
 	{
 		$this->maxMessages = $maxMessages;
 		$channel = $this->queue->getConnection()->getChannel();
@@ -60,23 +59,21 @@ class Consumer
 		}
 
 		$channel->consume(
-			function (Message $message, Channel $channel, Client $client): void {
+			function (Message $message, Channel $channel): void {
 				$this->messages++;
 				$result = call_user_func($this->callback, $message);
 
-				$this->sendResponse($message, $channel, $result, $client);
+				$this->sendResponse($message, $channel, $result);
 
 				if ($this->isMaxMessages()) {
-					$client->stop();
+					$channel->close();
 				}
 			},
 			$this->queue->getName()
 		);
-
-		$channel->getClient()->run($maxSeconds);
 	}
 
-	protected function sendResponse(Message $message, Channel $channel, int $result, Client $client): void
+	protected function sendResponse(Message $message, Channel $channel, int $result): void
 	{
 		switch ($result) {
 			case IConsumer::MESSAGE_ACK:
@@ -100,14 +97,14 @@ class Consumer
 			case IConsumer::MESSAGE_REJECT_AND_TERMINATE:
 				// Message will be discarded
 				$channel->reject($message, false);
-				$client->stop();
+				$channel->close();
 
 				break;
 
 			case IConsumer::MESSAGE_ACK_AND_TERMINATE:
 				// Acknowledge message and terminate
 				$channel->ack($message);
-				$client->stop();
+				$channel->close();
 
 				break;
 

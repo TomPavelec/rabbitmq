@@ -48,7 +48,7 @@ final class ConnectionFactory
 			$connectionData['password'],
 			$connectionData['vhost'],
 			(float) $connectionData['heartbeat'],
-			(float) $connectionData['timeout'],
+			(int) $connectionData['timeout'],
 			(bool) $connectionData['persistent'],
 			$connectionData['path'],
 			(bool) $connectionData['tcpNoDelay'],

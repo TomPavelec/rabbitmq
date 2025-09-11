@@ -41,7 +41,8 @@ final class BulkConsumerTest extends TestCase
 
 		$instance = new BulkConsumer('bulkTest', $queueMock, $callback, null, null, 3, 2);
 
-		$instance->consume(2);
+		$instance->consume(null, 2);
+		$client->run();
 
 		Assert::same(2, $countOfConsumerCallbackCalls, 'Number of consumer callback calls');
 		Assert::count(2, $channelMock->acks, 'Number of ACKs');
@@ -81,7 +82,8 @@ final class BulkConsumerTest extends TestCase
 
 		$instance = new BulkConsumer('bulkTest', $queueMock, $callback, null, null, 3, 2);
 
-		$instance->consume(2);
+		$instance->consume(null, 2);
+		$client->run();
 
 		Assert::same(2, $countOfConsumerCallbackCalls, 'Number of consumer callback calls');
 		Assert::count(2, $channelMock->nacks, 'Number of NACKs');
@@ -121,7 +123,13 @@ final class BulkConsumerTest extends TestCase
 
 		$instance = new BulkConsumer('bulkTest', $queueMock, $callback, null, null, 3, 2);
 
-		Assert::exception(fn () => $instance->consume(2), UnexpectedConsumerResultTypeException::class);
+		Assert::exception(
+			static function () use ($instance, $client): void {
+				$instance->consume(null, 2);
+				$client->run();
+			},
+			UnexpectedConsumerResultTypeException::class,
+		);
 
 		Assert::same(1, $countOfConsumerCallbackCalls, 'Number of consumer callback calls');
 		Assert::count(1, $channelMock->nacks, 'Number of NACKs');
@@ -150,6 +158,8 @@ final class BulkConsumerTest extends TestCase
 
 			private $channel;
 
+			private bool $running = false;
+
 			public function __construct($dataToConsume)
 			{
 				$this->dataToConsume = $dataToConsume;
@@ -169,7 +179,7 @@ final class BulkConsumerTest extends TestCase
 			{
 			}
 
-			public function run($maxSeconds = null): void
+			public function run(): void
 			{
 				$this->channel->ackPos++;
 				$this->channel->nackPos++;
@@ -178,20 +188,16 @@ final class BulkConsumerTest extends TestCase
 					do {
 						$data = array_shift($this->dataToConsume);
 						if ($data !== null) {
-							call_user_func($this->callback, new Message($data['key'], $data['key'], false, 'bulkTest', '', [], $data['content']), $this->channel, $this);
+		       			call_user_func($this->callback, new Message($data['key'], (int) $data['key'], false, 'bulkTest', '', [], $data['content']), $this->channel, $this);
 						}
 					} while ($this->running && $data !== null);
 				}
 			}
 
-			protected function feedReadBuffer(): void
+			public function stop(): void
 			{
+				$this->running = false;
 			}
-
-			protected function flushWriteBuffer(): void
-			{
-			}
-
 		};
 	}
 

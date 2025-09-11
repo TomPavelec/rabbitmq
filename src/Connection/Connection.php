@@ -3,6 +3,7 @@
 namespace Contributte\RabbitMQ\Connection;
 
 use Bunny\Channel;
+use Bunny\Client;
 use Bunny\Exception\ClientException;
 use Contributte\RabbitMQ\Connection\Exception\ConnectionException;
 
@@ -30,7 +31,7 @@ final class Connection implements IConnection
 		string $password,
 		string $vhost,
 		float $heartbeat,
-		float $timeout,
+		int $timeout,
 		bool $persistent,
 		string $path,
 		bool $tcpNoDelay,
@@ -62,7 +63,7 @@ final class Connection implements IConnection
 	public function __destruct()
 	{
 		if ($this->bunnyClient->isConnected()) {
-			$this->bunnyClient->syncDisconnect();
+			$this->bunnyClient->disconnect();
 		}
 	}
 
@@ -72,7 +73,11 @@ final class Connection implements IConnection
 	public function getChannel(): Channel
 	{
 		if ($this->channel instanceof Channel) {
-			return $this->channel;
+			if ($this->bunnyClient->isConnected()) {
+				return $this->channel;
+			}
+
+			$this->channel = null;
 		}
 
 		try {
@@ -93,6 +98,8 @@ final class Connection implements IConnection
 			 * Try to reconnect
 			 */
 			$this->bunnyClient = $this->createNewConnection();
+
+			$this->connectIfNeeded();
 
 			$channel = $this->bunnyClient->channel();
 
@@ -119,7 +126,6 @@ final class Connection implements IConnection
 	{
 		$now = time();
 		if ($this->lastBeat < ($now - self::HEARTBEAT_INTERVAL) && $this->bunnyClient->isConnected()) {
-			$this->bunnyClient->sendHeartbeat();
 			$this->lastBeat = $now;
 		}
 	}

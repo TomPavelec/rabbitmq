@@ -63,8 +63,8 @@ final class ExchangeDeclarator
 
 				foreach ($routingKeysToBind as $routingKey) {
 					$connection->getChannel()->queueBind(
-						$queue->getName(),
 						$name,
+						$queue->getName(),
 						$routingKey,
 						$queueBinding['noWait'],
 						$queueBinding['arguments']

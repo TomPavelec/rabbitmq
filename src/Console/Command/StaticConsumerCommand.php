@@ -40,7 +40,7 @@ final class StaticConsumerCommand extends AbstractConsumerCommand
 		$this->validateAmountOfMessages($amountOfMessages);
 
 		$consumer = $this->consumerFactory->getConsumer($consumerName);
-		$consumer->consume(null, $amountOfMessages);
+		$consumer->consume($amountOfMessages);
 
 		return 0;
 	}

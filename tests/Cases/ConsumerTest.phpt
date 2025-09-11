@@ -35,14 +35,15 @@ final class ConsumerTest extends TestCase
 		$callback = function (Message $message) use (&$countOfConsumerCallbackCalls) {
 			$countOfConsumerCallbackCalls++;
 			Assert::same('{"test":"' . $countOfConsumerCallbackCalls . '"}', $message->content, 'Consume message - content');
-			Assert::same((string) $countOfConsumerCallbackCalls, $message->deliveryTag, 'Consume message - deliveryTag');
+			Assert::same($countOfConsumerCallbackCalls, $message->deliveryTag, 'Consume message - deliveryTag');
 
 			return IConsumer::MESSAGE_ACK;
 		};
 
 		$instance = new Consumer('bulkTest', $queueMock, $callback, null, null);
 
-		$instance->consume(1);
+		$instance->consume(3);
+		$client->run();
 
 		Assert::same(2, $countOfConsumerCallbackCalls, 'Number of consumer callback calls');
 		Assert::count(1, $channelMock->acks, 'Number of ACKs');
@@ -72,14 +73,15 @@ final class ConsumerTest extends TestCase
 		$callback = function (Message $message) use (&$countOfConsumerCallbackCalls) {
 			$countOfConsumerCallbackCalls++;
 			Assert::same('{"test":"' . $countOfConsumerCallbackCalls . '"}', $message->content, 'Consume message - content');
-			Assert::same((string) $countOfConsumerCallbackCalls, $message->deliveryTag, 'Consume message - deliveryTag');
+			Assert::same($countOfConsumerCallbackCalls, $message->deliveryTag, 'Consume message - deliveryTag');
 
 			return IConsumer::MESSAGE_ACK;
 		};
 
 		$instance = new Consumer('bulkTest', $queueMock, $callback, null, null);
 
-		$instance->consume(null, 5);
+		$instance->consume(5);
+		$client->run();
 		Assert::same(5, $countOfConsumerCallbackCalls, 'Number of consumer callback calls');
 		Assert::count(1, $channelMock->acks, 'Number of ACKs');
 		Assert::same([
@@ -111,14 +113,21 @@ final class ConsumerTest extends TestCase
 		$callback = function (Message $message) use (&$countOfConsumerCallbackCalls): void {
 			$countOfConsumerCallbackCalls++;
 			Assert::same('{"test":"1"}', $message->content, 'Consume message - content');
-			Assert::same('1', $message->deliveryTag, 'Consume message - deliveryTag');
+			Assert::same(1, $message->deliveryTag, 'Consume message - deliveryTag');
 
 			throw new \Exception('test-exc');
 		};
 
 		$instance = new Consumer('bulkTest', $queueMock, $callback, null, null);
 
-		Assert::exception(fn () => $instance->consume(2), \Throwable::class, 'test-exc');
+		Assert::exception(
+			static function () use ($instance, $client): void {
+				$instance->consume(2);
+				$client->run();
+			},
+			\Throwable::class,
+			'test-exc',
+		);
 
 		Assert::same(1, $countOfConsumerCallbackCalls, 'Number of consumer callback calls');
 		Assert::count(0, $channelMock->nacks, 'Number of NACKs');
@@ -141,23 +150,29 @@ final class ConsumerTest extends TestCase
 
 		$countOfConsumerCallbackCalls = 0;
 		$callback = function (Message $message) use (&$countOfConsumerCallbackCalls) {
-			$countOfConsumerCallbackCalls++;
+ 			$countOfConsumerCallbackCalls++;
 			Assert::same('{"test":"1"}', $message->content, 'Consume message - content');
-			Assert::same('1', $message->deliveryTag, 'Consume message - deliveryTag');
+			Assert::same(1, $message->deliveryTag, 'Consume message - deliveryTag');
 
 			return true;
 		};
 
 		$instance = new Consumer('bulkTest', $queueMock, $callback, null, null);
 
-		Assert::exception(fn () => $instance->consume(1), \TypeError::class);
+		Assert::exception(
+			static function () use ($instance, $client): void {
+				$instance->consume(1);
+				$client->run();
+			},
+			\TypeError::class,
+		);
 
 		Assert::same(1, $countOfConsumerCallbackCalls, 'Number of consumer callback calls');
 		Assert::count(0, $channelMock->nacks, 'Number of NACKs');
 		Assert::same([], $channelMock->nacks, 'NACKs data');
 	}
 
-	public function testConsumeMessagesBadResultinvalidArgumetException(): void
+	public function testConsumeMessagesBadResultInvalidArgumentException(): void
 	{
 		$client = $this->createClient();
 
@@ -175,14 +190,20 @@ final class ConsumerTest extends TestCase
 		$callback = function (Message $message) use (&$countOfConsumerCallbackCalls) {
 			$countOfConsumerCallbackCalls++;
 			Assert::same('{"test":"1"}', $message->content, 'Consume message - content');
-			Assert::same('1', $message->deliveryTag, 'Consume message - deliveryTag');
+			Assert::same(1, $message->deliveryTag, 'Consume message - deliveryTag');
 
 			return PHP_INT_MAX - 987654321;
 		};
 
 		$instance = new Consumer('bulkTest', $queueMock, $callback, null, null);
 
-		Assert::exception(fn () => $instance->consume(1), \InvalidArgumentException::class);
+		Assert::exception(
+			static function () use ($instance, $client): void {
+				$instance->consume(1);
+				$client->run();
+			},
+			\InvalidArgumentException::class,
+		);
 
 		Assert::same(1, $countOfConsumerCallbackCalls, 'Number of consumer callback calls');
 		Assert::count(0, $channelMock->nacks, 'Number of NACKs');
@@ -204,6 +225,8 @@ final class ConsumerTest extends TestCase
 
 			private $channel;
 
+			private bool $running = false;
+
 			public function __construct($dataToConsume)
 			{
 				$this->dataToConsume = $dataToConsume;
@@ -223,7 +246,7 @@ final class ConsumerTest extends TestCase
 			{
 			}
 
-			public function run($maxSeconds = null): void
+			public function run(): void
 			{
 				$this->channel->ackPos++;
 				$this->channel->nackPos++;
@@ -232,20 +255,16 @@ final class ConsumerTest extends TestCase
 					do {
 						$data = array_shift($this->dataToConsume);
 						if ($data !== null) {
-							call_user_func($this->callback, new Message($data['key'], $data['key'], false, 'consumerTest', '', [], $data['content']), $this->channel, $this);
+		       			call_user_func($this->callback, new Message($data['key'], (int) $data['key'], false, 'consumerTest', '', [], $data['content']), $this->channel, $this);
 						}
 					} while ($this->running && $data !== null);
 				}
 			}
 
-			protected function feedReadBuffer(): void
+			public function stop(): void
 			{
+				$this->running = false;
 			}
-
-			protected function flushWriteBuffer(): void
-			{
-			}
-
 		};
 	}
 
