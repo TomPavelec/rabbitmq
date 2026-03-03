@@ -24,7 +24,7 @@
   "require": {
     "php": ">=8.2",
     "bunny/bunny": "~0.5.0",
-    "symfony/console": "^6.4.2 || ^7.0.2",
+    "symfony/console": "^6.4.2 || ^7.0.2 || ^8.0",
     "nette/di": "^3.0.7",
     "nette/utils": "^4.0.0"
   },
